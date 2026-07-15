@@ -9,7 +9,25 @@ import {
 } from './definitions';
 import { formatCurrency } from './utils';
 
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+// In dev, Next.js re-evaluates this module on every request, so a plain
+// `const sql = postgres(...)` opens a brand-new pool each time — and the
+// Supabase pooler's ~4s TLS/auth handshake then runs on every request,
+// leaving a multi-second silent gap in the streamed response. Caching the
+// client on `globalThis` keeps one warm pool across requests/module reloads.
+const globalForPostgres = globalThis as unknown as {
+  sql?: ReturnType<typeof postgres>;
+};
+
+const sql =
+  globalForPostgres.sql ??
+  postgres(process.env.POSTGRES_URL!, {
+    ssl: 'require',
+    prepare: false,
+    idle_timeout: 20,
+    max_lifetime: 60 * 30,
+  });
+
+if (process.env.NODE_ENV !== 'production') globalForPostgres.sql = sql;
 
 export async function fetchRevenue() {
   try {
